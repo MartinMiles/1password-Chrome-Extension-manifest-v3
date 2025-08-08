@@ -5,73 +5,147 @@
 let currentTabId = null;
 
 // Initialize the extension when the service worker starts
-chrome.runtime.onStartup.addListener(() => {
-  console.log('1Password extension starting up...');
-  initializeExtension();
-});
+try {
+  chrome.runtime.onStartup.addListener(() => {
+    console.log('1Password extension starting up...');
+    initializeExtension();
+  });
+} catch (error) {
+  console.log('Error setting up onStartup listener:', error);
+}
 
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('1Password extension installed...');
+try {
+  chrome.runtime.onInstalled.addListener(() => {
+    console.log('1Password extension installed...');
+    initializeExtension();
+  });
+} catch (error) {
+  console.log('Error setting up onInstalled listener:', error);
+}
+
+// Also initialize immediately in case the service worker is already running
+try {
+  console.log('1Password extension service worker loaded...');
   initializeExtension();
-});
+} catch (error) {
+  console.log('Error during immediate initialization:', error);
+}
 
 // Initialize extension functionality
 function initializeExtension() {
+  // Check if we're in a service worker context
+  if (typeof ServiceWorkerGlobalScope !== 'undefined' && self instanceof ServiceWorkerGlobalScope) {
+    console.log('Running in service worker context');
+  } else {
+    console.log('Not in service worker context');
+  }
   // Set up action click handler
-  chrome.action.onClicked.addListener((tab) => {
-    console.log('Action button clicked for tab:', tab.id);
-    handleActionClick(tab);
-  });
+  if (chrome.action && chrome.action.onClicked) {
+    chrome.action.onClicked.addListener((tab) => {
+      console.log('Action button clicked for tab:', tab.id);
+      handleActionClick(tab);
+    });
+  }
 
   // Set up context menu
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      title: '1Password',
-      contexts: ['all'],
-      onclick: (info) => {
-        console.log('Context menu clicked');
-        handleContextMenuClick(info);
+  if (chrome.contextMenus) {
+    try {
+      chrome.contextMenus.removeAll(() => {
+        chrome.contextMenus.create({
+          id: '1password-context-menu',
+          title: '1Password',
+          contexts: ['all']
+        });
+      });
+      
+      // Set up context menu click handler
+      if (chrome.contextMenus.onClicked) {
+        chrome.contextMenus.onClicked.addListener((info, tab) => {
+          console.log('Context menu clicked');
+          handleContextMenuClick(info);
+        });
       }
-    });
-  });
-
-  // Set up tab update listener
-  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (changeInfo.status === 'complete') {
-      handleTabComplete(tab);
-    }
-  });
-
-  // Set up message handling
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log('Message received:', message);
-    if (message && message.command) {
-      handleMessage(message, sender, sendResponse);
-      return true; // Keep the message channel open for async response
-    }
-  });
-}
-
-// Handle declarativeNetRequest events for onepasswdfill URLs
-chrome.declarativeNetRequest.onRuleMatchedDebug.addListener(
-  function(info) {
-    console.log('Rule matched for URL:', info.request.url);
-    if (info.request.url.includes('onepasswdfill')) {
-      handleOnePasswordFill(info);
+    } catch (error) {
+      console.log('Error setting up context menu:', error);
     }
   }
-);
 
-// Handle webRequest onCompleted for tracking fill completion
-chrome.webRequest.onCompleted.addListener(
-  function(details) {
-    if (currentTabId && currentTabId === details.tabId) {
-      console.log('Fill completion detected for tab:', details.tabId);
-      handleFillCompletion(details);
+  // Set up tab update listener
+  if (chrome.tabs && chrome.tabs.onUpdated) {
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+      if (changeInfo.status === 'complete') {
+        handleTabComplete(tab);
+      }
+    });
+  }
+
+  // Set up message handling
+  if (chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      console.log('Message received:', message);
+      if (message && message.command) {
+        handleMessage(message, sender, sendResponse);
+        return true; // Keep the message channel open for async response
+      }
+    });
+  }
+
+  // Set up declarativeNetRequest debug listener (only available in debug mode)
+  try {
+    if (chrome.declarativeNetRequest && chrome.declarativeNetRequest.onRuleMatchedDebug) {
+      chrome.declarativeNetRequest.onRuleMatchedDebug.addListener(
+        function(info) {
+          console.log('Rule matched for URL:', info.request.url);
+          if (info.request.url.includes('onepasswdfill')) {
+            handleOnePasswordFill(info);
+          }
+        }
+      );
     }
-  },
-  {types: ['main_frame'], urls: ['<all_urls>']}
-);
+  } catch (error) {
+    console.log('DeclarativeNetRequest debug API not available:', error);
+  }
+
+  // Fallback: Set up webRequest listener for onepasswdfill URLs
+  try {
+    if (chrome.webRequest && chrome.webRequest.onBeforeRequest) {
+      chrome.webRequest.onBeforeRequest.addListener(
+        function(details) {
+          if (details.url.includes('onepasswdfill')) {
+            console.log('onepasswdfill URL detected via webRequest:', details.url);
+            handleOnePasswordFill({
+              request: {
+                url: details.url,
+                tabId: details.tabId
+              }
+            });
+          }
+        },
+        {urls: ['<all_urls>'], types: ['main_frame']},
+        ['requestBody']
+      );
+    }
+  } catch (error) {
+    console.log('WebRequest onBeforeRequest API not available:', error);
+  }
+
+  // Set up webRequest listener
+  try {
+    if (chrome.webRequest && chrome.webRequest.onCompleted) {
+      chrome.webRequest.onCompleted.addListener(
+        function(details) {
+          if (currentTabId && currentTabId === details.tabId) {
+            console.log('Fill completion detected for tab:', details.tabId);
+            handleFillCompletion(details);
+          }
+        },
+        {types: ['main_frame'], urls: ['<all_urls>']}
+      );
+    }
+  } catch (error) {
+    console.log('WebRequest API not available:', error);
+  }
+}
 
 // Handle onepasswdfill URL processing
 function handleOnePasswordFill(info) {
@@ -86,16 +160,22 @@ function handleOnePasswordFill(info) {
     currentTabId = info.request.tabId;
     
     // Send message to content script to handle the fill
-    chrome.tabs.sendMessage(info.request.tabId, {
-      name: 'handleOnePasswordFill',
-      message: {
-        onepasswdfill: onepasswdfill,
-        onepasswdvault: onepasswdvault,
-        url: info.request.url
+    try {
+      if (chrome.tabs && chrome.tabs.sendMessage) {
+        chrome.tabs.sendMessage(info.request.tabId, {
+          name: 'handleOnePasswordFill',
+          message: {
+            onepasswdfill: onepasswdfill,
+            onepasswdvault: onepasswdvault,
+            url: info.request.url
+          }
+        }).catch(error => {
+          console.log('Could not send message to tab:', error);
+        });
       }
-    }).catch(error => {
-      console.log('Could not send message to tab:', error);
-    });
+    } catch (error) {
+      console.log('Error sending message to tab:', error);
+    }
   }
 }
 
@@ -109,12 +189,18 @@ function handleFillCompletion(details) {
 function handleActionClick(tab) {
   console.log('Action button clicked for URL:', tab.url);
   if (tab && tab.url) {
-    chrome.tabs.sendMessage(tab.id, {
-      name: 'toolbarButtonClicked',
-      message: { url: tab.url }
-    }).catch(error => {
-      console.log('Could not send message to tab:', error);
-    });
+    try {
+      if (chrome.tabs && chrome.tabs.sendMessage) {
+        chrome.tabs.sendMessage(tab.id, {
+          name: 'toolbarButtonClicked',
+          message: { url: tab.url }
+        }).catch(error => {
+          console.log('Could not send message to tab:', error);
+        });
+      }
+    } catch (error) {
+      console.log('Error sending message to tab:', error);
+    }
   }
 }
 
@@ -122,12 +208,18 @@ function handleActionClick(tab) {
 function handleContextMenuClick(info) {
   console.log('Context menu clicked for URL:', info.pageUrl);
   if (info.pageUrl) {
-    chrome.tabs.sendMessage(info.tabId, {
-      name: 'contextMenuClicked',
-      message: { url: info.pageUrl }
-    }).catch(error => {
-      console.log('Could not send message to tab:', error);
-    });
+    try {
+      if (chrome.tabs && chrome.tabs.sendMessage) {
+        chrome.tabs.sendMessage(info.tabId, {
+          name: 'contextMenuClicked',
+          message: { url: info.pageUrl }
+        }).catch(error => {
+          console.log('Could not send message to tab:', error);
+        });
+      }
+    } catch (error) {
+      console.log('Error sending message to tab:', error);
+    }
   }
 }
 
@@ -135,19 +227,31 @@ function handleContextMenuClick(info) {
 function handleTabComplete(tab) {
   console.log('Tab completed loading:', tab.url);
   if (tab.url === 'https://agilebits.com/browsers/welcome.html') {
-    chrome.tabs.sendMessage(tab.id, {
-      name: 'welcomePageLoaded',
-      message: {}
-    }).catch(error => {
-      console.log('Could not send message to tab:', error);
-    });
+    try {
+      if (chrome.tabs && chrome.tabs.sendMessage) {
+        chrome.tabs.sendMessage(tab.id, {
+          name: 'welcomePageLoaded',
+          message: {}
+        }).catch(error => {
+          console.log('Could not send message to tab:', error);
+        });
+      }
+    } catch (error) {
+      console.log('Error sending message to tab:', error);
+    }
   } else if (tab.url === 'https://agilebits.com/browsers/auth.html') {
-    chrome.tabs.sendMessage(tab.id, {
-      name: 'authPageLoaded',
-      message: {}
-    }).catch(error => {
-      console.log('Could not send message to tab:', error);
-    });
+    try {
+      if (chrome.tabs && chrome.tabs.sendMessage) {
+        chrome.tabs.sendMessage(tab.id, {
+          name: 'authPageLoaded',
+          message: {}
+        }).catch(error => {
+          console.log('Could not send message to tab:', error);
+        });
+      }
+    } catch (error) {
+      console.log('Error sending message to tab:', error);
+    }
   }
 }
 
