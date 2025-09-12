@@ -31,8 +31,18 @@ try {
   console.log('Error during immediate initialization:', error);
 }
 
+// Track if extension is already initialized
+let isInitialized = false;
+
 // Initialize extension functionality
 function initializeExtension() {
+  // Prevent multiple initializations
+  if (isInitialized) {
+    console.log('Extension already initialized, skipping...');
+    return;
+  }
+  isInitialized = true;
+  
   // Check if we're in a service worker context
   if (typeof ServiceWorkerGlobalScope !== 'undefined' && self instanceof ServiceWorkerGlobalScope) {
     console.log('Running in service worker context');
@@ -51,13 +61,25 @@ function initializeExtension() {
   if (chrome.contextMenus) {
     try {
       chrome.contextMenus.removeAll(() => {
+        // Check for chrome.runtime.lastError to handle any errors from removeAll
+        if (chrome.runtime.lastError) {
+          console.log('Error removing context menus:', chrome.runtime.lastError);
+        }
+
         chrome.contextMenus.create({
           id: '1password-context-menu',
           title: '1Password',
           contexts: ['all']
+        }, () => {
+          // Check for errors after creating the context menu
+          if (chrome.runtime.lastError) {
+            console.log('Error creating context menu:', chrome.runtime.lastError);
+          } else {
+            console.log('Context menu created successfully');
+          }
         });
       });
-      
+
       // Set up context menu click handler
       if (chrome.contextMenus.onClicked) {
         chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -86,6 +108,11 @@ function initializeExtension() {
       if (message && message.command) {
         handleMessage(message, sender, sendResponse);
         return true; // Keep the message channel open for async response
+      } else if (message && message.name) {
+        // Handle messages with 'name' property (like toolbarButtonClicked)
+        console.log('Message with name property received:', message.name);
+        // Return false to indicate we're not sending an async response
+        return false;
       }
     });
   }
