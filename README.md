@@ -1,6 +1,8 @@
 # 1Password Chrome Extension that works with Chrome Manifest V3
 
-<b style="color:red">UPDATE:</b> stopped working with Chrome 140, for that version, I made it work using info from [this thread](https://superuser.com/questions/1917854/is-there-any-way-to-still-use-manifest-v2-extensions-in-google-chrome-139)
+```diff
+- UPDATE: stopped working with Chrome 140, for that version, I made it work using info from [this thread]([http://example.com](https://superuser.com/questions/1917854/is-there-any-way-to-still-use-manifest-v2-extensions-in-google-chrome-139)
+```
 
 Since Google Chrome has recently stopped running all v2 and earlier extensions, our standalone 1Password extension has become non-operational.
 
